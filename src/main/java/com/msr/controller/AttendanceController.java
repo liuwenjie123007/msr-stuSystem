@@ -1,0 +1,206 @@
+package com.msr.controller;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.servlet.ServletOutputStream;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.apache.poi.ss.usermodel.Workbook;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.ControllerAdvice;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.ModelAndView;
+
+import com.msr.entity.Attendance;
+import com.msr.entity.Role;
+import com.msr.entity.User;
+import com.msr.service.AttendanceService;
+import com.msr.service.ClazzService;
+import com.msr.service.CompanyService;
+import com.msr.service.StudentService;
+import com.msr.util.DateUtil;
+import com.msr.util.StringUtil;
+
+import cn.afterturn.easypoi.excel.ExcelExportUtil;
+import cn.afterturn.easypoi.excel.entity.TemplateExportParams;
+
+@RequestMapping("/admin/attendance")
+@Controller
+@ControllerAdvice(annotations = RestController.class)
+public class AttendanceController {
+	@Autowired
+	private AttendanceService attendanceService;
+	
+	@Autowired
+	private StudentService studentService;
+	
+	@Autowired
+	private CompanyService companyService;
+	
+	@Autowired
+	private ClazzService clazzService;
+
+	/**
+	 * 考勤列表页面
+	 * 
+	 * @param model
+	 * @return
+	 */
+	@RequestMapping(value = "/list", method = RequestMethod.GET)
+	public ModelAndView list(ModelAndView model) {
+		model.setViewName("attendance/list");
+		return model;
+	}
+
+	/**
+	 * 获取考勤列表
+	 * 
+	 * @return String studentName,Integer companyId,Integer clazzId,Date
+	 *         startDate,Date endDate
+	 */
+	@RequestMapping(value = "/list", method = RequestMethod.POST)
+	@ResponseBody
+	public List<Attendance> getList(HttpServletRequest request,Integer stuId, Integer companyId, Integer clazzId, Date startDate, Date endDate) {
+		
+		User user = (User)request.getSession().getAttribute("admin");
+		Role role = (Role)request.getSession().getAttribute("role");
+		
+		if(role.getId() == 3) {
+			stuId = studentService.findStudentByName(user.getUsername()).getStuId();
+		}
+		
+		// 查询班级信息
+		List<Attendance> attendanceList = attendanceService.attendanceList(stuId, companyId, clazzId, startDate,endDate);
+
+		return attendanceList;
+	}
+
+	// 导出
+	@RequestMapping("exportexcel")
+	public void exportexcel(HttpServletResponse response) {
+
+	}
+
+	/**
+	 * 修改考勤
+	 * 
+	 * @param user
+	 * @return
+	 */
+	@RequestMapping(value = "/update")
+	@ResponseBody
+	public Map<String, String> update(Attendance attendance) {
+		Map<String, String> ret = new HashMap<String, String>();
+		if (attendance == null) {
+			ret.put("type", "error");
+			ret.put("msg", "请填写正确的考勤信息！");
+			return ret;
+		}
+		if (attendanceService.update(attendance) <= 0) {
+			ret.put("type", "error");
+			ret.put("msg", "考勤编辑失败，请联系管理员！");
+			return ret;
+		}
+		ret.put("type", "success");
+		return ret;
+	}
+	
+	/**
+	 * 添加考勤
+	 */
+	@RequestMapping(value = "/insert")
+	@ResponseBody
+	public Map<String, String> insert(Attendance attendance) {
+		Map<String, String> ret = new HashMap<String, String>();
+		if (attendance == null) {
+			ret.put("type", "error");
+			ret.put("msg", "请填写正确的考勤信息！");
+			return ret;
+		}
+		if (attendanceService.insert(attendance) <= 0) {
+			ret.put("type", "error");
+			ret.put("msg", "考勤编辑失败，请联系管理员！");
+			return ret;
+		}
+		ret.put("type", "success");
+		return ret;
+	}
+	
+
+	//导出Excel
+	@RequestMapping("/exportExcel")
+	public void export(HttpServletResponse response,Integer stuId, Integer companyId, Integer clazzId, Date startDate, Date endDate) throws Exception {
+		List<Attendance> attendanceList = attendanceService.attendanceList(stuId, companyId, clazzId, startDate,endDate);
+		
+		for (Attendance attendance : attendanceList) {
+			if(!StringUtil.isEmpty(attendance.getCompanyId())) {
+				attendance.setCompanyName(companyService.findCompanyById(attendance.getCompanyId()).getCompanyName());
+			}
+			
+			if(!StringUtil.isEmpty(attendance.getClazzId())) {
+				attendance.setClazzName(clazzService.findClazzById(attendance.getClazzId()).getClazzName());
+			}
+			
+			if(!StringUtil.isEmpty(attendance.getStuId())) {
+				attendance.setStuName(studentService.findStudentById(attendance.getStuId()).getStuName());
+			}
+			
+			attendance.setExportDate(DateUtil.getDateToString(attendance.getaDate()));
+		}
+		
+		// 导出操作
+		 // 获取导出excel指定模版，第二个参数true代表显示一个Excel中的所有 sheet
+        TemplateExportParams params = new TemplateExportParams("excel/attendance.xls", true);
+        Map<String, Object> data = new HashMap<String, Object>();
+        data.put("date", new Date());//导出一般都要日期
+        data.put("list", attendanceList);//导出list集合
+        try {
+            // 简单模板导出方法
+            Workbook book = ExcelExportUtil.exportExcel(params, data);
+            //下载方法
+            export(response, book, "考勤表");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+		/*String fileName = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date());
+		EasyPOIUtil.exportExcel(attendanceList, "出勤表", "422", Attendance.class, "出勤表"+fileName+".xls", response);*/
+	}
+	
+	private static void export(HttpServletResponse response, Workbook workbook, String fileName) throws Exception {
+        response.reset();
+        response.setContentType("application/x-msdownload");
+        fileName = fileName + new SimpleDateFormat("yyyyMMddHHmmss").format(new Date());
+        response.setHeader("Content-disposition", "attachment; filename=" + new String(fileName.getBytes("gb2312"), "ISO-8859-1") + ".xls");
+        ServletOutputStream outStream = null;
+        try {
+            outStream = response.getOutputStream();
+            workbook.write(outStream);
+        } finally {
+            outStream.close();
+        }
+    }
+
+	// Excel导入
+	@RequestMapping("importExcel")
+	public void importExcel(@RequestParam("textFile") MultipartFile file, HttpServletRequest request) throws Exception {
+		// String filePath = "D:\\考勤数据.xls";
+		System.out.println(file);// 用来检查前端是否把文件传过来
+		// 解析excel，
+		//List<Attendance> personList = EasyPOIUtil.importExcel(file, 1, 1, Attendance.class);
+		// 也可以使用EasyPOIUtil.importExcel(filePath,1,1,Attendance.class) 导入
+		//System.out.println("导入数据一共【" + personList.size() + "】行");
+		// TODO 保存数据库
+	}
+
+}
